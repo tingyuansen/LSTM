@@ -222,24 +222,44 @@ val_fraction = 0.33
 X_train, X_val, y_train, y_val = train_test_split(X_scaled, y, test_size=val_fraction, random_state=0)
 
 # Define metric, which does not depend on imbalance of positive and negative classes in validation/test set
-# Defining sensitivity = true_positive/(total real positive)
+# Defining sensitivity = true_positive/(total real positive) = tp/(tp+fn)
+# sensitivity is the same as recall
 def sensitivity(y_true, y_pred):
-    true_positives = K.sum(K.round(K.clip(y_true * y_pred, 0, 1)))
+    y_pred = K.clip(y_pred, 0, 1)
+    true_positives = K.sum(K.round(y_true * y_pred)) 
     # K.clip(x,a,b) x is a tensor, a and b are numbers, clip converts any element of x falling
     # below the range [a,b] to a, and any element of x falling above the range [a,b] to b.
     possible_positives = K.sum(K.round(K.clip(y_true, 0, 1)))
     # K.epsilon >0 & <<< 1, in order to avoid division by zero.
-    return true_positives / (possible_positives + K.epsilon())
+    sen = recall = true_positives / (possible_positives + K.epsilon())
+    return sen
 
-# Specificity = true_negative/(total real negative)
+# Specificity = true_negative/(total real negative) = tn/(tn+fp)
 def specificity(y_true, y_pred):
     true_negatives = K.sum(K.round(K.clip((1-y_true) * (1-y_pred), 0, 1)))
     possible_negatives = K.sum(K.round(K.clip(1-y_true, 0, 1)))
-    return true_negatives / (possible_negatives + K.epsilon())
+    spec = true_negatives / (possible_negatives + K.epsilon())
+    return spec
+
+# Precision = true_positives/predicted_positives = tp/(tp+fp)
+def precision(y_true, y_pred):
+    # just in case of hipster activation at the final layer
+    y_pred = K.clip(y_pred, 0, 1)
+    true_positives = K.sum(K.round(y_true * y_pred)) 
+    predicted_positives = K.sum(K.round(K.clip(y_pred, 0, 1)))
+    prec = true_positives / predicted_positives
+    return prec
 
 # Informedness = sensitivity + specificity - 1
 def informedness(y_true, y_pred):
     return sensitivity(y_true, y_pred)+specificity(y_true, y_pred)-1
+
+# f1 = 2/((1/precision) + (1/recall))
+def f1_score(y_true, y_pred):
+    prec = precision(y_true, y_pred)
+    sen = sensitivity(y_true, y_pred)
+    f1 = 2*((prec*sen)/(prec + sen + K.epsilon()))
+    return f1
 
 # Build LSTM networks using keras
 model = Sequential()
