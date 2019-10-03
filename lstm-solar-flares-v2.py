@@ -248,8 +248,15 @@ def f1_score(y_true, y_pred):
     return f1
 
 # Calculate the imbalance between positive and negative classes in the data set
-n_tot = len(y)
-n_P = y.flatten().sum()
+
+
+####################################################
+###### This is where the data leakage was occuring.
+###### we had 'y' instead of 'y_train' in the following two lines.
+n_tot = len(y_train)
+n_P = y_train.flatten().sum()
+#####################################################
+
 n_N = n_tot - n_P
 print('There are {} positive-class samples.'.format(n_P))
 print(' and {} negative-class samples.'.format(n_N))
