@@ -288,7 +288,7 @@ def fit_model(X_train, y_train, batch_size=batch_size):
     model.compile(loss='binary_crossentropy',optimizer='adam',metrics=[f1_score, informedness])
     # print the summary of the model
     # print(model.summary())
-   	model.fit(X_train, y_train, epochs=10, verbose=0, batch_size=batch_size, class_weight={0:N_weight,1:P_weight})
+    model.fit(X_train, y_train, epochs=10, verbose=0, batch_size=batch_size, class_weight={0:N_weight,1:P_weight})
     return model
 
 # simple ensembling - mean averaging with equal model weights
@@ -304,13 +304,13 @@ def ensemble_predictions(members, X_val):
 
 # evaluate a specific number of members in an ensemble
 def evaluate_n_members(X_val, y_val, members, n_members=10):
-	# select a subset of members
-	subset = members[:n_members]
-	print(len(subset))
-	# make prediction
-	yhat = ensemble_predictions(subset, X_val)
-	# calculate accuracy
-	return accuracy_score(y_val, yhat)
+    # select a subset of members
+    subset = members[:n_members]
+    print(len(subset))
+    # make prediction
+    yhat = ensemble_predictions(subset, X_val)
+    # calculate accuracy
+    return accuracy_score(y_val, yhat)
 
 
 # fit all models
@@ -319,9 +319,10 @@ members = [fit_model(X_train, y_train) for _ in range(n_members)]
 # evaluate different numbers of ensembles
 scores = list()
 for i in range(1, n_members+1):
-	score = evaluate_n_members(members, i, X_val, y_val)
-	print('> %.3f' % score)
-	scores.append(score)
+    score = evaluate_n_members(members, i, X_val, y_val)
+    print('> %.3f' % score)
+    scores.append(score)
+
 # plot score vs number of ensemble members
 x_axis = [i for i in range(1, n_members+1)]
 plt.plot(x_axis, scores)
