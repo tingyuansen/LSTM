@@ -247,33 +247,6 @@ def f1_score(y_true, y_pred):
     f1 = 2*((prec*sen)/(prec + sen + K.epsilon()))
     return f1
 
-# Build LSTM networks using keras
-model = Sequential()
-# first LSTM layer, input_shape = (batch_size, time_steps, feature_num),
-# output_size = (batch_size, time_steps, hidden_size)
-# the first dimension does not need to be specified (batch_size)
-# the second dimension of the output is 1 if return_sequences = False, is time_steps if return_sequences = True
-model.add(LSTM(units=hidden_size, input_shape=(time_steps,feature_num), return_sequences=True))
-
-# second LSTM layer, input_shape = (batch_size, time_steps, feature_num)
-# output_shape = (batch_size, 1, feature_num)
-model.add(LSTM(units=hidden_size, return_sequences=False))
-
-# dropout to avoid overfitting if use_dropout
-if use_dropout:
-    model.add(Dropout(0.5))
-
-# we add the Dense layer and the Activation layer separately, so we can access to the output of the Dense layer
-# which is the linear combination = weight*input + bias, before going through the nonlinear activation function
-model.add(Dense(y_dim)) # Dense layer has y_dim=1 neuron.
-model.add(Activation('sigmoid'))
-
-
-# Compile the model
-model.compile(loss='binary_crossentropy',optimizer='adam',metrics=[informedness])
-# print the summary of the model
-print(model.summary())
-
 # Calculate the imbalance between positive and negative classes in the data set
 n_tot = len(y)
 n_P = y.flatten().sum()
@@ -292,5 +265,83 @@ P_weight = round(n_N/n_P*0.5) # (num_zero/num_one)*t, t=1 if you pays all attent
 print('weight for negative class is {}.'.format(N_weight))
 print('weight for positive class is {}.'.format(P_weight))
 
+
+# Build LSTM networks using keras
+def fit_model(X_train, y_train, batch_size=batch_size):
+    model = Sequential()
+    # first LSTM layer, input_shape = (batch_size, time_steps, feature_num),
+    # output_size = (batch_size, time_steps, hidden_size)
+    # the first dimension does not need to be specified (batch_size)
+    # the second dimension of the output is 1 if return_sequences = False, is time_steps if return_sequences = True
+    model.add(LSTM(units=hidden_size, input_shape=(time_steps,feature_num), return_sequences=True))
+    # second LSTM layer, input_shape = (batch_size, time_steps, feature_num)
+    # output_shape = (batch_size, 1, feature_num)
+    model.add(LSTM(units=hidden_size, return_sequences=False))
+    # dropout to avoid overfitting if use_dropout
+    if use_dropout:
+        model.add(Dropout(0.5))
+    # we add the Dense layer and the Activation layer separately, so we can access to the output of the Dense layer
+    # which is the linear combination = weight*input + bias, before going through the nonlinear activation function
+    model.add(Dense(y_dim)) # Dense layer has y_dim=1 neuron.
+    model.add(Activation('sigmoid'))
+    # Compile the model
+    model.compile(loss='binary_crossentropy',optimizer='adam',metrics=[f1_score, informedness])
+    # print the summary of the model
+    # print(model.summary())
+   	model.fit(X_train, y_train, epochs=10, verbose=0, batch_size=batch_size, class_weight={0:N_weight,1:P_weight})
+    return model
+
+# simple ensembling - mean averaging with equal model weights
+def ensemble_predictions(members, X_val):
+    # make predictions
+    yhats = [model.predict(X_val) for model in members]
+    yhats = array(yhats)
+    # sum across ensemble members
+    summed = numpy.sum(yhats, axis=0)
+    # argmax across classes
+    result = argmax(summed, axis=1)
+    return result
+
+# evaluate a specific number of members in an ensemble
+def evaluate_n_members(X_val, y_val, members, n_members=10):
+	# select a subset of members
+	subset = members[:n_members]
+	print(len(subset))
+	# make prediction
+	yhat = ensemble_predictions(subset, X_val)
+	# calculate accuracy
+	return accuracy_score(y_val, yhat)
+
+
+# fit all models
+n_members = 20
+members = [fit_model(X_train, y_train) for _ in range(n_members)]
+# evaluate different numbers of ensembles
+scores = list()
+for i in range(1, n_members+1):
+	score = evaluate_n_members(members, i, X_val, y_val)
+	print('> %.3f' % score)
+	scores.append(score)
+# plot score vs number of ensemble members
+x_axis = [i for i in range(1, n_members+1)]
+plt.plot(x_axis, scores)
+plt.show()
+
+
+
+"""
 # train the network, note the argument class_weight, which will put more penalty for misclassifying minor class
-model.fit(X_train,y_train,batch_size=batch_size,epochs=10,class_weight={0:N_weight,1:P_weight},validation_data=(X_val,y_val))
+#history = model.fit(X_train,y_train,batch_size=batch_size,epochs=10,class_weight={0:N_weight,1:P_weight},validation_data=(X_val,y_val))
+
+# evaluate the model
+_, train_acc = model.evaluate(X_train, y_train, verbose=0)
+_, val_acc = model.evaluate(X_val, y_val, verbose=0)
+print('Train: %.3f, Val: %.3f' % (train_acc, val_acc))
+
+
+# plot history
+plt.plot(history.history['accuracy'], label='train')
+plt.plot(history.history['val_accuracy'], label='test')
+plt.legend()
+plt.show()
+"""
