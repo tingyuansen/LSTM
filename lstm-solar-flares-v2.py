@@ -105,12 +105,10 @@ def get_obj_with_last_n_val(line, n):
     obj = next(decode_obj(line))  # type:dict
     id = obj['id']
     class_label = obj['classNum']
-
     data = pd.DataFrame.from_dict(obj['values'])  # type:pd.DataFrame
     data.set_index(data.index.astype(int), inplace=True)
     last_n_indices = np.arange(0, 60)[-n:]
     data = data.loc[last_n_indices]
-
     return {'id': id, 'classType': class_label, 'values': data}
 
 def convert_json_data_to_nparray(data_dir: str, file_name: str, features):
@@ -123,12 +121,10 @@ def convert_json_data_to_nparray(data_dir: str, file_name: str, features):
     :return: the generated dataframe.
     """
     fname = os.path.join(data_dir, file_name)
-
     all_df, labels, ids = [], [], []
     with open(fname, 'r') as infile: # Open the file for reading
         for line in infile:  # Each 'line' is one MVTS with its single label (0 or 1).
             obj = get_obj_with_last_n_val(line, 60) # obj is a dictionary
-
             # if the classType in the sample is NaN, we do not read in this sample
             if np.isnan(obj['classType']):
                 pass
@@ -136,21 +132,12 @@ def convert_json_data_to_nparray(data_dir: str, file_name: str, features):
                 # a pd.DataFrame with shape = time_steps x number of features
                 # here time_steps = 60, and # of features are the length of the list `features`.
                 df_selected_features = obj['values'][features]
-
                 # a list of np.array, each has shape=time_steps x number of features
                 # I use DataFrame here so that the feature name is contained, which we need later for
                 # scaling features.
                 all_df.append(np.array(df_selected_features))
-
                 labels.append(obj['classType']) # list of integers, each integer is either 1 or 0
                 ids.append(obj['id']) # list of integers
-
-#     df = pd.concat(all_df).reset_index(drop=True)
-#     df = df.assign(LABEL=pd.Series(labels))
-#     df = df.assign(ID=pd.Series(ids))
-#     df.set_index([pd.Index(ids)])
-    # Uncomment if you want to save this as CSV
-    #df.to_csv(file_name + '_last_vals.csv', index=False)
     return all_df, labels, ids
 
 print('Files contained in the ../input directiory include:')
@@ -195,7 +182,6 @@ def scale_features(X, selected_features):
             X_copy[:,:,i] = np.nan_to_num((x - x_mean)/x_std)
         else:
             print(feature+' is not found, and thus not scaled.')
-
     return X_copy
 
 # Scale X
