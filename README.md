@@ -16,9 +16,9 @@ python setup.py install
 The [tutorial](blah) shows some simple use cases.
 
 ## Dependencies
-* Training a new neural network requires [PyTorch](http://pytorch.org/).
+* Training a new neural network requires [Keras](https://keras.io/).
 * All these dependencies will be automatically installed alongside with this package
-* I develop this package in Python 3.7 using Anaconda.
+* I develop this package in Python 3.6 using Anaconda.
 
 ## Citing this code
 * Please cite [blah](blah), when using this code.
