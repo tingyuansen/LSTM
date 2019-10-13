@@ -347,14 +347,14 @@ for train, val in kfold.split(np.asarray(labels), np.asarray(labels)):
     X_val = X[val]
     y_train = y[train]
     y_val = y[val]
-    #
+    """
     for i in range(time_steps):
         _ = preprocessor_per_timestep.fit(X_train[:,i])
         X_train[:,i] = preprocessor_per_timestep.transform(X_train[:,i])
         X_val[:,i] = preprocessor_per_timestep.transform(X_val[:,i])
-    #
+    """
     #'Class Balanced Loss Based on Effective Number of Samples
-    labels_kfold = np.argmax(y_train)
+    labels_kfold = np.argmax(y_train, axis=1)
     unique_targets, unique_targets_cnts = np.unique(labels_kfold, return_counts=True)
     #y_cnts is basically normalized_unique_targets_cnts
     y_cnts = unique_targets_cnts/len(labels_kfold)
@@ -366,3 +366,4 @@ for train, val in kfold.split(np.asarray(labels), np.asarray(labels)):
     clf = KerasClassifier(classifier, alpha_cb=alpha_cb, optimizer='adam', epochs=num_epochs, batch_size=batch_size, verbose=2, validation_data=(X_val,y_val))
     history = clf.fit(X_train, y_train)
     cvscores.append(history.history['val_f1_score'][-1] * 100)
+
