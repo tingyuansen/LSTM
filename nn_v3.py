@@ -5,9 +5,6 @@ warnings.filterwarnings('ignore',category=FutureWarning)
 #runtimewarning is from powertransformer
 warnings.filterwarnings('ignore',category=RuntimeWarning)
 
-import sys
-import resource
-
 epsilon = 1e-5
 
 # libraries for read in data
