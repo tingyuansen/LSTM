@@ -341,6 +341,7 @@ kfold = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=seed)
 cvscores = []
 
 
+
 for train, val in kfold.split(np.asarray(labels), np.asarray(labels)):
     X_train = X[train]
     X_val = X[val]
@@ -353,9 +354,10 @@ for train, val in kfold.split(np.asarray(labels), np.asarray(labels)):
         X_val[:,i] = preprocessor_per_timestep.transform(X_val[:,i])
     #
     #'Class Balanced Loss Based on Effective Number of Samples
-    unique_targets, unique_targets_cnts = np.unique(labels, return_counts=True)
+    labels_kfold = np.argmax(y_train)
+    unique_targets, unique_targets_cnts = np.unique(labels_kfold, return_counts=True)
     #y_cnts is basically normalized_unique_targets_cnts
-    y_cnts = unique_targets_cnts/len(labels)
+    y_cnts = unique_targets_cnts/len(labels_kfold)
     alpha_cb = (1-beta_cb)/(1-beta_cb**y_cnts)
     alpha_cb_norm_fac = len(unique_targets)/np.sum(np.unique(alpha_cb))
     alpha_cb *= alpha_cb_norm_fac
