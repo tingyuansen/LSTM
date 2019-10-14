@@ -5,6 +5,9 @@ warnings.filterwarnings('ignore',category=FutureWarning)
 #runtimewarning is from powertransformer
 warnings.filterwarnings('ignore',category=RuntimeWarning)
 
+import sys
+import resource
+
 epsilon = 1e-5
 
 # libraries for read in data
@@ -23,8 +26,12 @@ from sklearn.preprocessing import PowerTransformer as pt, StandardScaler as ss, 
 
 from sklearn.compose import ColumnTransformer as ct
 
+from sklearn.pipeline import make_pipeline, Pipeline
+from sklearn.experimental import enable_iterative_imputer
+from sklearn.impute import IterativeImputer
+
 import tensorflow as tf
-#import tensorflow_addons as tfa
+import tensorflow_addons as tfa
 
 from tensorflow.keras.models import Sequential, load_model
 #from keras.layers import Dense, Activation, Dropout, TimeDistributed, LSTM, Flatten, Bidirectional
@@ -164,13 +171,11 @@ def timeseries_powertransformation(X):
         X_new = pool.starmap(powertransform_func, X_2D)
     return np.asarray(X_new)
 
-from sklearn.pipeline import make_pipeline, Pipeline
-from sklearn.experimental import enable_iterative_imputer
-from sklearn.impute import IterativeImputer
-
 imputer_per_sample = make_pipeline(ft(timeseries_imputation, validate=False))
 
 preprocessor_per_sample = make_pipeline(imputer_per_sample, ft(timeseries_powertransformation, validate=False), ft(timeseries_detrending, validate=False), ft(timeseries_normalization, validate=False))
+
+preprocessor_per_timestep = make_pipeline(pt(), mms())
 
 """
 ## Run this commented part only once, so you are able to save the pickled files. Then comment it out.
@@ -211,36 +216,6 @@ X = pickle.load( open( "trainingset3_modified.pkl", "rb" ) )
 y = pickle.load( open( "trainingset3_output_modified.pkl", "rb" ) )
 #y_test = pickle.load( open( "testset_output_modified.pkl", "rb" ) )
 labels = y.copy()
-
-
-preprocessor_per_timestep = make_pipeline(pt(), mms())
-
-
-
-# check NaN in y, X #, X_scaled
-print('There are {} NaN in y.'.format(np.isnan(y).sum()))
-print('There are {} NaN in X.'.format(np.isnan(X).sum()))
-#print('There are {} NaN in X_scaled.'.format(np.isnan(X_scaled).sum()))
-
-
-# Set some hyperparameters
-n_sample = len(y)
-time_steps = X.shape[1]#60
-batch_size = 64
-feature_num = len(selected_features) # 25 features per time step
-hidden_size = feature_num
-use_dropout = True
-use_callback = False # to be added later
-
-
-
-
-# one-hot encode y
-from sklearn.preprocessing import OneHotEncoder
-onehot_encoder = OneHotEncoder(sparse=False)
-y = onehot_encoder.fit_transform(y)
-y_dim = np.shape(y)[1] # y=0 if no flare, y=1 if flare
-
 
 
 # Define metric, which does not depend on imbalance of positive and negative classes in validation/test set
@@ -284,6 +259,7 @@ def f1_score(y_true, y_pred):
     return f1
 
 
+"""
 yt = np.array([[[1,0],[1,0],[0,1]]])
 yp = np.array([[[.2,.8],[.7,.3],[.5,.5]]])
 
@@ -293,12 +269,36 @@ k_yp = K.variable(value=yp)#, dtype='float64')
 specificity(k_yt,k_yp)
 precision(k_yt,k_yp)
 f1_score(k_yt,k_yp)
+"""
 
 
 alpha = 0.5
 gamma = 2
 beta_cb = 0.99
 # alpha, gamma, and beta_cb are to be set by CV
+unique_targets, unique_targets_cnts = np.unique(labels, return_counts=True)
+#y_cnts is basically normalized_unique_targets_cnts
+y_cnts = unique_targets_cnts/len(labels)
+alpha_cb = (1-beta_cb)/(1-beta_cb**y_cnts)
+alpha_cb_norm_fac = len(unique_targets)/np.sum(np.unique(alpha_cb))
+alpha_cb *= alpha_cb_norm_fac
+alpha_cb = np.array(alpha_cb, dtype='float16')
+
+
+
+# check NaN in y, X #, X_scaled
+print('There are {} NaN in y.'.format(np.isnan(y).sum()))
+print('There are {} NaN in X.'.format(np.isnan(X).sum()))
+#print('There are {} NaN in X_scaled.'.format(np.isnan(X_scaled).sum()))
+
+
+# one-hot encode y
+from sklearn.preprocessing import OneHotEncoder
+onehot_encoder = OneHotEncoder(sparse=False)
+y = onehot_encoder.fit_transform(y)
+y_dim = np.shape(y)[1] # y=0 if no flare, y=1 if flare
+
+
 
 def wrapped_loss(alpha_cb, alpha=alpha, gamma=gamma):
     def weighted_crossentropy(targets, inputs):
@@ -321,15 +321,40 @@ def mish(x):
 num_folds = 5
 num_epochs = 50
 
+radam = tfa.optimizers.RectifiedAdam(
+        lr=1e-1,
+        total_steps=10000,
+        warmup_proportion=0.1,
+        min_lr=1e-5)
+
+ranger = tfa.optimizers.Lookahead(radam, sync_period=6, slow_step_size=0.5)
+
+
+
+
+# Set some hyperparameters
+n_sample = len(y)
+time_steps = X.shape[1]#60
+batch_size = 64
+feature_num = len(selected_features) # 25 features per time step
+hidden_size = feature_num
+use_dropout = True
+use_callback = False # to be added later
+
+
+
+
 def classifier(alpha_cb, optimizer='adam',dropout=0.5):
     model = Sequential()
-    model.add(Bidirectional(LSTM(units=hidden_size, input_shape=(time_steps,feature_num), return_sequences=True), merge_mode = 'ave'))
-    model.add(Bidirectional(LSTM(units=hidden_size, return_sequences=True), merge_mode = 'ave'))
+    model.add(LSTM(units=hidden_size, input_shape=(time_steps,feature_num), return_sequences=True))
+    model.add(LSTM(units=hidden_size, return_sequences=True))
+    #model.add(Bidirectional(LSTM(units=hidden_size, return_sequences=True), merge_mode = 'ave'))
     model.add(TimeDistributed(Dense(int(hidden_size/2), activation=mish)))
     model.add(Flatten())
     model.add(Dense(y_dim)) # Dense layer has y_dim=1 or 2 neuron.
     model.add(Activation('softmax'))
     model.compile(loss=wrapped_loss(alpha_cb), optimizer=optimizer, metrics=[f1_score])
+    #model.compile(loss='categorical_crossentropy', optimizer=optimizer, metrics=[f1_score])
     return model
 
 
@@ -341,19 +366,19 @@ kfold = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=seed)
 cvscores = []
 
 
-
 for train, val in kfold.split(np.asarray(labels), np.asarray(labels)):
     X_train = X[train]
     X_val = X[val]
     y_train = y[train]
     y_val = y[val]
-    """
+    #"""
     for i in range(time_steps):
         _ = preprocessor_per_timestep.fit(X_train[:,i])
         X_train[:,i] = preprocessor_per_timestep.transform(X_train[:,i])
         X_val[:,i] = preprocessor_per_timestep.transform(X_val[:,i])
-    """
+    #"""
     #'Class Balanced Loss Based on Effective Number of Samples
+    """
     labels_kfold = np.argmax(y_train, axis=1)
     unique_targets, unique_targets_cnts = np.unique(labels_kfold, return_counts=True)
     #y_cnts is basically normalized_unique_targets_cnts
@@ -362,8 +387,9 @@ for train, val in kfold.split(np.asarray(labels), np.asarray(labels)):
     alpha_cb_norm_fac = len(unique_targets)/np.sum(np.unique(alpha_cb))
     alpha_cb *= alpha_cb_norm_fac
     alpha_cb = np.array(alpha_cb, dtype='float16')
+    """
     #
-    clf = KerasClassifier(classifier, alpha_cb=alpha_cb, optimizer='adam', epochs=num_epochs, batch_size=batch_size, verbose=2, validation_data=(X_val,y_val))
+    clf = KerasClassifier(classifier, alpha_cb=alpha_cb, optimizer=ranger, epochs=num_epochs, batch_size=batch_size, verbose=1, validation_data=(X_val,y_val))
     history = clf.fit(X_train, y_train)
     cvscores.append(history.history['val_f1_score'][-1] * 100)
 
