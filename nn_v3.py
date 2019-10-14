@@ -38,12 +38,15 @@ from tensorflow.keras.models import Sequential, load_model
 from tensorflow.keras.layers import *
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras import backend as K
-K.set_floatx('float16')
+
 from tensorflow.keras.wrappers.scikit_learn import KerasClassifier
 
 import pickle
 
 import multiprocessing as mp
+
+FLOAT_TYPE = 'float64'
+K.set_floatx(FLOAT_TYPE)
 
 # all features
 feature_names = ['TOTUSJH', 'TOTBSQ', 'TOTPOT', 'TOTUSJZ', 'ABSNJZH', 'SAVNCPP', 'USFLUX', 'TOTFZ', 'MEANPOT', 'EPSZ', 'MEANSHR', 'SHRGT45', 'MEANGAM', 'MEANGBT', 'MEANGBZ', 'MEANGBH', 'MEANJZH', 'TOTFY', 'MEANJZD', 'MEANALP', 'TOTFX', 'EPSY', 'EPSX', 'R_VALUE', 'XR_MAX']
@@ -282,7 +285,7 @@ y_cnts = unique_targets_cnts/len(labels)
 alpha_cb = (1-beta_cb)/(1-beta_cb**y_cnts)
 alpha_cb_norm_fac = len(unique_targets)/np.sum(np.unique(alpha_cb))
 alpha_cb *= alpha_cb_norm_fac
-alpha_cb = np.array(alpha_cb, dtype='float16')
+alpha_cb = np.array(alpha_cb, dtype=FLOAT_TYPE)
 
 
 
@@ -295,7 +298,7 @@ print('There are {} NaN in X.'.format(np.isnan(X).sum()))
 # one-hot encode y
 from sklearn.preprocessing import OneHotEncoder
 onehot_encoder = OneHotEncoder(sparse=False)
-y = onehot_encoder.fit_transform(y)
+y = np.asarray(onehot_encoder.fit_transform(y), dtype=FLOAT_TYPE)
 y_dim = np.shape(y)[1] # y=0 if no flare, y=1 if flare
 
 
@@ -321,21 +324,12 @@ def mish(x):
 num_folds = 5
 num_epochs = 50
 
-radam = tfa.optimizers.RectifiedAdam(
-        lr=1e-1,
-        total_steps=10000,
-        warmup_proportion=0.1,
-        min_lr=1e-5)
-
-ranger = tfa.optimizers.Lookahead(radam, sync_period=6, slow_step_size=0.5)
-
-
 
 
 # Set some hyperparameters
 n_sample = len(y)
 time_steps = X.shape[1]#60
-batch_size = 64
+batch_size = 256
 feature_num = len(selected_features) # 25 features per time step
 hidden_size = feature_num
 use_dropout = True
@@ -349,12 +343,13 @@ def classifier(alpha_cb, optimizer='adam',dropout=0.5):
     model.add(LSTM(units=hidden_size, input_shape=(time_steps,feature_num), return_sequences=True))
     model.add(LSTM(units=hidden_size, return_sequences=True))
     #model.add(Bidirectional(LSTM(units=hidden_size, return_sequences=True), merge_mode = 'ave'))
+    model.add(Dropout(dropout))
     model.add(TimeDistributed(Dense(int(hidden_size/2), activation=mish)))
     model.add(Flatten())
     model.add(Dense(y_dim)) # Dense layer has y_dim=1 or 2 neuron.
     model.add(Activation('softmax'))
-    model.compile(loss=wrapped_loss(alpha_cb), optimizer=optimizer, metrics=[f1_score])
-    #model.compile(loss='categorical_crossentropy', optimizer=optimizer, metrics=[f1_score])
+    #model.compile(loss=wrapped_loss(alpha_cb), optimizer=optimizer, metrics=[f1_score])
+    model.compile(loss='categorical_crossentropy', optimizer=optimizer, metrics=[f1_score])
     return model
 
 
@@ -376,9 +371,8 @@ for train, val in kfold.split(np.asarray(labels), np.asarray(labels)):
         _ = preprocessor_per_timestep.fit(X_train[:,i])
         X_train[:,i] = preprocessor_per_timestep.transform(X_train[:,i])
         X_val[:,i] = preprocessor_per_timestep.transform(X_val[:,i])
-    #"""
-    #'Class Balanced Loss Based on Effective Number of Samples
     """
+    #'Class Balanced Loss Based on Effective Number of Samples
     labels_kfold = np.argmax(y_train, axis=1)
     unique_targets, unique_targets_cnts = np.unique(labels_kfold, return_counts=True)
     #y_cnts is basically normalized_unique_targets_cnts
@@ -386,10 +380,9 @@ for train, val in kfold.split(np.asarray(labels), np.asarray(labels)):
     alpha_cb = (1-beta_cb)/(1-beta_cb**y_cnts)
     alpha_cb_norm_fac = len(unique_targets)/np.sum(np.unique(alpha_cb))
     alpha_cb *= alpha_cb_norm_fac
-    alpha_cb = np.array(alpha_cb, dtype='float16')
+    alpha_cb = np.array(alpha_cb, dtype=FLOAT_TYPE)
     """
-    #
-    clf = KerasClassifier(classifier, alpha_cb=alpha_cb, optimizer=ranger, epochs=num_epochs, batch_size=batch_size, verbose=1, validation_data=(X_val,y_val))
+    clf = KerasClassifier(classifier, alpha_cb=alpha_cb, optimizer='adam', epochs=num_epochs, batch_size=batch_size, verbose=1, validation_data=(X_val,y_val))
     history = clf.fit(X_train, y_train)
     cvscores.append(history.history['val_f1_score'][-1] * 100)
 
