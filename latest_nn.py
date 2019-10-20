@@ -395,7 +395,7 @@ def wrapped_loss(alpha_cb, alpha=alpha, gamma=gamma):
         fl = alpha * K.pow((1-cce_exp), gamma) * cce
         # weighted focal loss
         wfl = w * K.pow((1-cce_exp), gamma) * cce
-        return wfl
+        return fl
     return weighted_crossentropy
 
 
@@ -412,7 +412,7 @@ num_epochs = 50
 # Set some hyperparameters
 n_sample = len(y)
 time_steps = X.shape[1]#60
-batch_size = 256
+batch_size = 64
 feature_num = len(selected_features) # 25 features per time step
 hidden_size = feature_num
 use_dropout = True
@@ -453,8 +453,8 @@ for train, val in kfold.split(np.asarray(labels), np.asarray(labels)):
     y_train = y[train]
     y_val = y[val]
     #pre-processing per sample
-    X_train = preprocessor_per_sample.fit_transform(X_train)
-    X_val = preprocessor_per_sample.fit_transform(X_val)
+    #X_train = preprocessor_per_sample.fit_transform(X_train)
+    #X_val = preprocessor_per_sample.fit_transform(X_val)
     for i in range(X_train.shape[1]):
         q = preprocessor_per_timestep
         _ = q.fit(X_train[:,i])
