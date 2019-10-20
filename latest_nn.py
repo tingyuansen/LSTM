@@ -53,37 +53,6 @@ feature_names = ['TOTUSJH', 'TOTBSQ', 'TOTPOT', 'TOTUSJZ', 'ABSNJZH', 'SAVNCPP',
 selected_features = feature_names
 
 
-"""
-# By observing the histograms of relevant features, their histograms can be grouped into four categories.
-# right skewed with extreme outliers, right skewed without extreme outliers, left skewed with extreme outliers, non skewed
-right_skewed_features = ['TOTUSJH', 'TOTBSQ', 'TOTPOT', 'TOTUSJZ', 'ABSNJZH', 'SAVNCPP', 'USFLUX', 'EPSZ', 'MEANSHR', 'MEANGAM', 'MEANGBH', 'MEANJZD']
-right_skewed_features_with_ol = ['TOTBSQ', 'TOTPOT', 'TOTUSJZ', 'SAVNCPP', 'USFLUX', 'MEANSHR', 'MEANGAM', 'MEANGBH', 'MEANJZD']
-right_skewed_features_without_ol = ['TOTUSJH', 'ABSNJZH', 'EPSZ']
-left_skewed_features_with_ol = ['TOTFZ']
-non_skewed_features = ['MEANGBT', 'R_VALUE']
-selected_features = right_skewed_features + non_skewed_features
-
-# get the indice for features
-indice_right_skewed_with_ol = []
-indice_right_skewed_without_ol = []
-indice_non_skewed = []
-for i in range(0,len(selected_features)):
-    if selected_features[i] in right_skewed_features_with_ol:
-        indice_right_skewed_with_ol.append(i)
-    elif selected_features[i] in right_skewed_features_without_ol:
-        indice_right_skewed_without_ol.append(i)
-    elif selected_features[i] in non_skewed_features:
-        indice_non_skewed.append(i)
-
-
-scale_params_right_skewed = pd.read_csv('scale_params_right_skewed.csv')
-scale_params_right_skewed.set_index('Unnamed: 0', inplace=True)
-
-scale_params_non_skewed = pd.read_csv('scale_params_non_skewed.csv')
-scale_params_non_skewed.set_index('Unnamed: 0', inplace=True)
-
-"""
-
 
 # Functions for reading in data from .json files
 def decode_obj(line, pos=0, decoder=JSONDecoder()):
@@ -253,10 +222,6 @@ def timeseries_nan_rs(X):
         X_new = pool.starmap(nan_robust_scaler, X_2D)
     return np.asarray(X_new)
 
-#pre_preprocessor_per_timestep = ct(transformers=[('log', ft(log_transform, validate=False), list_of_features_to_log)], remainder='passthrough')
-#('scale', ss(), scale_features)],
-
-
 
 imputer_per_sample = make_pipeline(ft(timeseries_imputation, validate=False))
 pt_per_sample = ft(timeseries_powertransformation, validate=False)
@@ -276,10 +241,6 @@ preprocessor_per_timestep = make_pipeline(p3, nan_rs_per_timestep, imputer_per_t
 path_to_data = "./input"
 file_id = 'fold2Training'
 file_name = file_id+'.json'
-#file_name
-#file_name_test = "testSet.json"
-
-
 
 
 """
@@ -294,9 +255,11 @@ all_input, labels, ids = convert_json_data_to_nparray(path_to_data, file_name, s
 
 
 # Change X and y to numpy.array in the correct shape.
-#X = np.array(all_input)
-#y = np.array([labels]).T
-#y = np.squeeze(y).reshape(-1,1)
+X = np.array(all_input)
+y = np.array([labels]).T
+y = np.squeeze(y).reshape(-1,1)
+labels = y.copy()
+
 #print("The shape of X is (sample_size x time_steps x feature_num) = {}.".format(X.shape))
 #print("the shape of y is (sample_size x 1) = {}, because it is a binary classification.".format(y.shape))
 #pickle.dump(X, open(file_id + ".pkl", "wb"))
@@ -381,17 +344,6 @@ def f1_score(y_true, y_pred):
     return f1
 
 
-"""
-yt = np.array([[[1,0],[1,0],[0,1]]])
-yp = np.array([[[.2,.8],[.7,.3],[.5,.5]]])
-
-k_yt = K.variable(value=yt)#, dtype='float64')
-k_yp = K.variable(value=yp)#, dtype='float64')
-
-specificity(k_yt,k_yp)
-precision(k_yt,k_yp)
-f1_score(k_yt,k_yp)
-"""
 
 # check NaN in y, X #, X_scaled
 print('There are {} NaN in y.'.format(np.isnan(y).sum()))
@@ -500,31 +452,14 @@ for train, val in kfold.split(np.asarray(labels), np.asarray(labels)):
     X_val = X[val]
     y_train = y[train]
     y_val = y[val]
-    #"""
     #pre-processing per sample
-    #X_train = preprocessor_per_sample.fit_transform(X_train)
-    #X_val = preprocessor_per_sample.fit_transform(X_val)
+    X_train = preprocessor_per_sample.fit_transform(X_train)
+    X_val = preprocessor_per_sample.fit_transform(X_val)
     for i in range(X_train.shape[1]):
         q = preprocessor_per_timestep
         _ = q.fit(X_train[:,i])
         X_train[:,i] = preprocessor_per_timestep.transform(X_train[:,i])
         X_val[:,i] = preprocessor_per_timestep.transform(X_val[:,i])
-    """
-    #'Class Balanced Loss Based on Effective Number of Samples
-    labels_kfold = np.argmax(y_train, axis=1)
-    unique_targets, unique_targets_cnts = np.unique(labels_kfold, return_counts=True)
-    #y_cnts is basically normalized_unique_targets_cnts
-    y_cnts = unique_targets_cnts/len(labels_kfold)
-    alpha_cb = (1-beta_cb)/(1-beta_cb**y_cnts)
-    alpha_cb_norm_fac = len(unique_targets)/np.sum(np.unique(alpha_cb))
-    alpha_cb *= alpha_cb_norm_fac
-    alpha_cb = np.array(alpha_cb, dtype=FLOAT_TYPE)
-    """
-    #for i in range(X_train.shape[1]):
-    #    q = mms()
-    #    _ = q.fit(X_train[:,i])
-    #    X_train[:,i] = q.transform(X_train[:,i])
-    #    X_val[:,i] = q.transform(X_val[:,i])
     # check NaN in y, X
     print('There are {} NaN in y_train.'.format(np.isnan(y_train).sum()))
     print('There are {} NaN in X_train.'.format(np.isnan(X_train).sum()))
