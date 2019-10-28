@@ -1,9 +1,11 @@
-
 # to suppress future warning from tf + np 1.17 combination.
 import warnings
 warnings.filterwarnings('ignore',category=FutureWarning)
 #runtimewarning is from powertransformer
 warnings.filterwarnings('ignore',category=RuntimeWarning)
+
+
+from __future__ import absolute_import, division, print_function, unicode_literals
 
 epsilon = 1e-5
 
@@ -30,6 +32,7 @@ from sklearn.experimental import enable_iterative_imputer
 from sklearn.impute import *
 
 import tensorflow as tf
+tf.config.optimizer.set_jit(True)
 import tensorflow_addons as tfa
 
 from tensorflow.keras.models import Sequential, load_model
@@ -51,7 +54,6 @@ K.set_floatx(FLOAT_TYPE)
 feature_names = ['TOTUSJH', 'TOTBSQ', 'TOTPOT', 'TOTUSJZ', 'ABSNJZH', 'SAVNCPP', 'USFLUX', 'TOTFZ', 'MEANPOT', 'EPSZ', 'MEANSHR', 'SHRGT45', 'MEANGAM', 'MEANGBT', 'MEANGBZ', 'MEANGBH', 'MEANJZH', 'TOTFY', 'MEANJZD', 'MEANALP', 'TOTFX', 'EPSY', 'EPSX', 'R_VALUE', 'XR_MAX']
 # we select all features
 selected_features = feature_names
-
 
 
 # Functions for reading in data from .json files
@@ -229,7 +231,7 @@ nan_ss_per_sample = ft(timeseries_nan_ss, validate=False)
 nan_rs_per_sample = ft(timeseries_nan_rs, validate=False)
 dt_per_sample = ft(timeseries_detrending, validate=False)
 norm_per_sample = ft(timeseries_normalization, validate=False)
-preprocessor_per_sample = make_pipeline(nan_rs_per_sample, dt_per_sample)
+preprocessor_per_sample = make_pipeline(dt_per_sample)
 
 imputer_per_timestep = SimpleImputer(strategy='median')
 nan_ss_per_timestep = ft(nan_standard_scaler, validate=False)
@@ -239,13 +241,13 @@ preprocessor_per_timestep = make_pipeline(p3, nan_rs_per_timestep, imputer_per_t
 
 
 path_to_data = "./input"
-file_id = 'fold2Training'
+file_id = 'fold3Training'
 file_name = file_id+'.json'
 
 
-"""
-
-
+# I recommend reading in the raw json file for the relevant fold, pickling it, and using the pickle going forward.
+# Once pickled, you can even go ahead and delete the json file.
+#"""
 ## Run this commented part only once, so you are able to save the pickled files. Then comment it out.
 
 # Read in all data in a single file
@@ -258,27 +260,18 @@ all_input, labels, ids = convert_json_data_to_nparray(path_to_data, file_name, s
 X = np.array(all_input)
 y = np.array([labels]).T
 y = np.squeeze(y).reshape(-1,1)
-labels = y.copy()
-
 #print("The shape of X is (sample_size x time_steps x feature_num) = {}.".format(X.shape))
 #print("the shape of y is (sample_size x 1) = {}, because it is a binary classification.".format(y.shape))
-#pickle.dump(X, open(file_id + ".pkl", "wb"))
-#pickle.dump(y, open(file_id + "_output.pkl", "wb"))
+pickle.dump(X, open(file_id + ".pkl", "wb"))
+pickle.dump(y, open(file_id + "_output.pkl", "wb"))
 
-"""
-
-
-
+#"""
 
 # read from pickle
 X = pickle.load(open(file_id + ".pkl", "rb"))
 y = pickle.load(open(file_id + "_output.pkl", "rb"))
 labels = y.copy()
 
-#X_test = np.array(all_input_test)
-#y_test = np.array([labels_test]).T
-#print("The shape of X_test is (sample_size x time_steps x feature_num) = {}.".format(X_test.shape))
-#print("the shape of y_test is (sample_size x 1) = {}, because it is a binary classification.".format(y_test.shape))
 
 """
 #X = preprocessor_per_sample.fit_transform(X)
@@ -344,7 +337,6 @@ def f1_score(y_true, y_pred):
     return f1
 
 
-
 # check NaN in y, X #, X_scaled
 print('There are {} NaN in y.'.format(np.isnan(y).sum()))
 print('There are {} NaN in X.'.format(np.isnan(X).sum()))
@@ -365,13 +357,13 @@ gamma = 2.
 
 # beta_cb is also to be set by CV.
 # beta_cb gives alpha_cb, which is the main parameter for ____ loss.
-beta_cb = 0.999
+beta_cb = 0.99
 unique_targets, unique_targets_cnts = np.unique(labels, return_counts=True)
 #y_cnts is basically normalized_unique_targets_cnts
 y_cnts = unique_targets_cnts/len(labels)
 alpha_cb = (1-beta_cb)/(1-beta_cb**y_cnts)
 
-alpha_cb = np.asarray([1.1,2.35])
+#alpha_cb = np.asarray([1.1,2.35])
 
 alpha_cb_norm_fac = len(unique_targets)/np.sum(alpha_cb)
 alpha_cb *= alpha_cb_norm_fac
@@ -395,7 +387,7 @@ def wrapped_loss(alpha_cb, alpha=alpha, gamma=gamma):
         fl = alpha * K.pow((1-cce_exp), gamma) * cce
         # weighted focal loss
         wfl = w * K.pow((1-cce_exp), gamma) * cce
-        return fl
+        return wfl
     return weighted_crossentropy
 
 
@@ -403,13 +395,9 @@ def wrapped_loss(alpha_cb, alpha=alpha, gamma=gamma):
 def mish(x):
     return x*K.tanh(K.softplus(x))
 
-# Build LSTM networks using keras
-num_folds = 5
-num_epochs = 50
-
-
 
 # Set some hyperparameters
+num_epochs = 50
 n_sample = len(y)
 time_steps = X.shape[1]#60
 batch_size = 64
@@ -417,7 +405,7 @@ feature_num = len(selected_features) # 25 features per time step
 hidden_size = feature_num
 use_dropout = True
 use_callback = False # to be added later
-adam = Adam(lr=0.01)
+adam = Adam(lr=0.005)
 
 
 #from keras_self_attention import SeqSelfAttention
@@ -426,9 +414,9 @@ adam = Adam(lr=0.01)
 def classifier(alpha_cb=alpha_cb, time_steps = time_steps, optimizer='adam',dropout=0.5):
     model = Sequential()
     #model.add(LSTM(units=hidden_size, input_shape=(time_steps,feature_num), return_sequences=True))
-    model.add(Bidirectional(LSTM(units=hidden_size, input_shape=(time_steps,feature_num), return_sequences=True), merge_mode = 'sum'))
+    model.add(Bidirectional(LSTM(units=hidden_size, input_shape=(time_steps,feature_num), return_sequences=True), merge_mode = 'concat'))
     #model.add(LSTM(units=hidden_size, return_sequences=True))
-    model.add(Bidirectional(LSTM(units=hidden_size, return_sequences=True), merge_mode = 'sum'))
+    model.add(Bidirectional(LSTM(units=hidden_size, return_sequences=True), merge_mode = 'concat'))
     model.add(Dropout(dropout))
     #model.add(Bidirectional(LSTM(units=int(hidden_size/2), return_sequences=True), merge_mode = 'sum'))
     model.add(TimeDistributed(Dense(int(hidden_size/2), activation=mish)))
@@ -460,7 +448,6 @@ for train, val in kfold.split(np.asarray(labels), np.asarray(labels)):
         _ = q.fit(X_train[:,i])
         X_train[:,i] = preprocessor_per_timestep.transform(X_train[:,i])
         X_val[:,i] = preprocessor_per_timestep.transform(X_val[:,i])
-    # check NaN in y, X
     print('There are {} NaN in y_train.'.format(np.isnan(y_train).sum()))
     print('There are {} NaN in X_train.'.format(np.isnan(X_train).sum()))
     time_steps = X_train.shape[1]#60
