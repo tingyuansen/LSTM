@@ -1,3 +1,9 @@
+#export TF_XLA_FLAGS=--tf_xla_auto_jit=2
+#export TFA_XLA_FLAGS=--tf_xla_cpu_global_jit
+#export XLA_FLAGS=--xla_hlo_profile
+
+from __future__ import absolute_import, division, print_function, unicode_literals
+
 # to suppress future warning from tf + np 1.17 combination.
 import warnings
 warnings.filterwarnings('ignore',category=FutureWarning)
@@ -5,7 +11,6 @@ warnings.filterwarnings('ignore',category=FutureWarning)
 warnings.filterwarnings('ignore',category=RuntimeWarning)
 
 
-from __future__ import absolute_import, division, print_function, unicode_literals
 
 epsilon = 1e-5
 
@@ -47,13 +52,45 @@ import pickle
 
 import multiprocessing as mp
 
-FLOAT_TYPE = 'float64'
+FLOAT_TYPE = 'float32'
 K.set_floatx(FLOAT_TYPE)
 
 # all features
 feature_names = ['TOTUSJH', 'TOTBSQ', 'TOTPOT', 'TOTUSJZ', 'ABSNJZH', 'SAVNCPP', 'USFLUX', 'TOTFZ', 'MEANPOT', 'EPSZ', 'MEANSHR', 'SHRGT45', 'MEANGAM', 'MEANGBT', 'MEANGBZ', 'MEANGBH', 'MEANJZH', 'TOTFY', 'MEANJZD', 'MEANALP', 'TOTFX', 'EPSY', 'EPSX', 'R_VALUE', 'XR_MAX']
 # we select all features
 selected_features = feature_names
+
+
+"""
+# By observing the histograms of relevant features, their histograms can be grouped into four categories.
+# right skewed with extreme outliers, right skewed without extreme outliers, left skewed with extreme outliers, non skewed
+right_skewed_features = ['TOTUSJH', 'TOTBSQ', 'TOTPOT', 'TOTUSJZ', 'ABSNJZH', 'SAVNCPP', 'USFLUX', 'EPSZ', 'MEANSHR', 'MEANGAM', 'MEANGBH', 'MEANJZD']
+right_skewed_features_with_ol = ['TOTBSQ', 'TOTPOT', 'TOTUSJZ', 'SAVNCPP', 'USFLUX', 'MEANSHR', 'MEANGAM', 'MEANGBH', 'MEANJZD']
+right_skewed_features_without_ol = ['TOTUSJH', 'ABSNJZH', 'EPSZ']
+left_skewed_features_with_ol = ['TOTFZ']
+non_skewed_features = ['MEANGBT', 'R_VALUE']
+selected_features = right_skewed_features + non_skewed_features
+
+# get the indice for features
+indice_right_skewed_with_ol = []
+indice_right_skewed_without_ol = []
+indice_non_skewed = []
+for i in range(0,len(selected_features)):
+    if selected_features[i] in right_skewed_features_with_ol:
+        indice_right_skewed_with_ol.append(i)
+    elif selected_features[i] in right_skewed_features_without_ol:
+        indice_right_skewed_without_ol.append(i)
+    elif selected_features[i] in non_skewed_features:
+        indice_non_skewed.append(i)
+
+
+scale_params_right_skewed = pd.read_csv('scale_params_right_skewed.csv')
+scale_params_right_skewed.set_index('Unnamed: 0', inplace=True)
+
+scale_params_non_skewed = pd.read_csv('scale_params_non_skewed.csv')
+scale_params_non_skewed.set_index('Unnamed: 0', inplace=True)
+
+"""
 
 
 # Functions for reading in data from .json files
@@ -124,6 +161,54 @@ def convert_json_data_to_nparray(data_dir: str, file_name: str, features):
                 ids.append(obj['id']) # list of integers
     return all_df, labels, ids
 
+
+############################################################
+############################################################
+
+def get_obj_with_last_n_val_test(line, n):
+    # since decode_obj(line) is a generator
+    # next(generator) would execute this generator and returns its content
+    obj = next(decode_obj(line))  # type:dict
+    id = obj['id']
+    data = pd.DataFrame.from_dict(obj['values'])  # type:pd.DataFrame
+    data.set_index(data.index.astype(int), inplace=True)
+    last_n_indices = np.arange(0, 60)[-n:]
+    data = data.loc[last_n_indices]
+    return {'id': id, 'values': data}
+
+def convert_json_data_to_nparray_test(data_dir: str, file_name: str, features):
+    """
+    Generates a dataframe by concatenating the last values of each
+    multi-variate time series. This method is designed as an example
+    to show how a json object can be converted into a csv file.
+    :param data_dir: the path to the data directory.
+    :param file_name: name of the file to be read, with the extension.
+    :return: the generated dataframe.
+    """
+    fname = os.path.join(data_dir, file_name)
+    all_df, ids = [], [], []
+    with open(fname, 'r') as infile: # Open the file for reading
+        for line in infile:  # Each 'line' is one MVTS with its single label (0 or 1).
+            obj = get_obj_with_last_n_val(line, 60) # obj is a dictionary
+            # if the classType in the sample is NaN, we do not read in this sample
+            if np.isnan(obj['classType']):
+                pass
+            else:
+                # a pd.DataFrame with shape = time_steps x number of features
+                # here time_steps = 60, and # of features are the length of the list `features`.
+                df_selected_features = obj['values'][features]
+                # a list of np.array, each has shape=time_steps x number of features
+                # I use DataFrame here so that the feature name is contained, which we need later for
+                # scaling features.
+                all_df.append(np.array(df_selected_features))
+                ids.append(obj['id']) # list of integers
+    return all_df, labels, ids
+
+
+##################################################################
+##################################################################
+
+
 print('Files contained in the ../input directiory include:')
 print(os.listdir("./input"))
 
@@ -131,13 +216,21 @@ print(os.listdir("./input"))
 def diff_func(x):
     # x is 2d array
     return np.diff(x, axis=0)
+    #return np.asarray([i - x[0] for i in x])[1:]
 
+  
 def timeseries_detrending(X):
     # X is np.array, 3D
     X_2D = [*zip(X[i] for i in range(X.shape[0]))]
     with mp.Pool() as pool:
         X_new = pool.starmap(diff_func, X_2D)
     return np.asarray(X_new)
+
+def detrender(X):
+    x = pd.DataFrame(x)
+    output_df = x.diff()[1:]
+    return output_df.values
+
 
 #rescaling to range 0-1
 def minmax_func(x):
@@ -224,6 +317,10 @@ def timeseries_nan_rs(X):
         X_new = pool.starmap(nan_robust_scaler, X_2D)
     return np.asarray(X_new)
 
+#pre_preprocessor_per_timestep = ct(transformers=[('log', ft(log_transform, validate=False), list_of_features_to_log)], remainder='passthrough')
+#('scale', ss(), scale_features)],
+
+
 
 imputer_per_sample = make_pipeline(ft(timeseries_imputation, validate=False))
 pt_per_sample = ft(timeseries_powertransformation, validate=False)
@@ -231,23 +328,31 @@ nan_ss_per_sample = ft(timeseries_nan_ss, validate=False)
 nan_rs_per_sample = ft(timeseries_nan_rs, validate=False)
 dt_per_sample = ft(timeseries_detrending, validate=False)
 norm_per_sample = ft(timeseries_normalization, validate=False)
-preprocessor_per_sample = make_pipeline(dt_per_sample)
+preprocessor_per_sample = make_pipeline(nan_rs_per_sample,dt_per_sample)
+# if applied, preprocessor_per_sample with first robustly standardize each feature in the given sample, then detrend using row-wise differencing
+
 
 imputer_per_timestep = SimpleImputer(strategy='median')
 nan_ss_per_timestep = ft(nan_standard_scaler, validate=False)
 nan_rs_per_timestep = ft(nan_robust_scaler, validate=False)
+#dt_per_timestep doesn't make much sense
+#dt_per_timestep = ft(detrender, validate=False)
 preprocessor_per_timestep = make_pipeline(p3, nan_rs_per_timestep, imputer_per_timestep)#, mms())
-
+# preprocessor_per_timestep first take the log of features with skew above a certain level ('p3'), then robustly standardizes each feature along all times, then does median imputation
 
 
 path_to_data = "./input"
-file_id = 'fold3Training'
+file_id = 'fold1Training'
 file_name = file_id+'.json'
+#file_name
+#file_name_test = "testSet.json"
 
 
-# I recommend reading in the raw json file for the relevant fold, pickling it, and using the pickle going forward.
-# Once pickled, you can even go ahead and delete the json file.
-#"""
+
+
+"""
+
+
 ## Run this commented part only once, so you are able to save the pickled files. Then comment it out.
 
 # Read in all data in a single file
@@ -260,18 +365,26 @@ all_input, labels, ids = convert_json_data_to_nparray(path_to_data, file_name, s
 X = np.array(all_input)
 y = np.array([labels]).T
 y = np.squeeze(y).reshape(-1,1)
+labels = y.copy()
 #print("The shape of X is (sample_size x time_steps x feature_num) = {}.".format(X.shape))
 #print("the shape of y is (sample_size x 1) = {}, because it is a binary classification.".format(y.shape))
 pickle.dump(X, open(file_id + ".pkl", "wb"))
 pickle.dump(y, open(file_id + "_output.pkl", "wb"))
 
-#"""
+"""
+
+
+
 
 # read from pickle
 X = pickle.load(open(file_id + ".pkl", "rb"))
 y = pickle.load(open(file_id + "_output.pkl", "rb"))
 labels = y.copy()
 
+#X_test = np.array(all_input_test)
+#y_test = np.array([labels_test]).T
+#print("The shape of X_test is (sample_size x time_steps x feature_num) = {}.".format(X_test.shape))
+#print("the shape of y_test is (sample_size x 1) = {}, because it is a binary classification.".format(y_test.shape))
 
 """
 #X = preprocessor_per_sample.fit_transform(X)
@@ -329,13 +442,13 @@ def precision(y_true, y_pred):
 def informedness(y_true, y_pred):
     return sensitivity(y_true, y_pred)+specificity(y_true, y_pred)-1
 
+
 # f1 = 2/((1/precision) + (1/recall))
 def f1_score(y_true, y_pred):
     prec = precision(y_true, y_pred)
     sen = sensitivity(y_true, y_pred)
     f1 = 2*((prec*sen)/(prec + sen + K.epsilon()))
     return f1
-
 
 # check NaN in y, X #, X_scaled
 print('There are {} NaN in y.'.format(np.isnan(y).sum()))
@@ -361,9 +474,10 @@ beta_cb = 0.99
 unique_targets, unique_targets_cnts = np.unique(labels, return_counts=True)
 #y_cnts is basically normalized_unique_targets_cnts
 y_cnts = unique_targets_cnts/len(labels)
+# from that paper
 alpha_cb = (1-beta_cb)/(1-beta_cb**y_cnts)
-
-#alpha_cb = np.asarray([1.1,2.35])
+# 1/sqrt(cnts)
+#alpha_cb = 1/np.sqrt(unique_targets_cnts)
 
 alpha_cb_norm_fac = len(unique_targets)/np.sum(alpha_cb)
 alpha_cb *= alpha_cb_norm_fac
@@ -395,42 +509,59 @@ def wrapped_loss(alpha_cb, alpha=alpha, gamma=gamma):
 def mish(x):
     return x*K.tanh(K.softplus(x))
 
+# Build LSTM networks using keras
+num_epochs = 100
+num_epochs_lr = 1
+
 
 # Set some hyperparameters
-num_epochs = 50
 n_sample = len(y)
 time_steps = X.shape[1]#60
-batch_size = 64
+batch_size = 512
 feature_num = len(selected_features) # 25 features per time step
 hidden_size = feature_num
 use_dropout = True
 use_callback = False # to be added later
-adam = Adam(lr=0.005)
+adam = Adam(lr=0.001)
+
+
+radam = tfa.optimizers.RectifiedAdam(
+        lr=1e-1,
+        total_steps=10000,
+        warmup_proportion=0.1,
+        min_lr=1e-5)
+
+ranger = tfa.optimizers.Lookahead(radam, sync_period=6, slow_step_size=0.5)
 
 
 #from keras_self_attention import SeqSelfAttention
 # doesn't work with tensorflow 2.0
 
-def classifier(alpha_cb=alpha_cb, time_steps = time_steps, optimizer='adam',dropout=0.5):
+def classifier(alpha_cb=alpha_cb, time_steps = time_steps, optimizer='adam', dropout=0.50, recurrent_dropout=0.25):
     model = Sequential()
-    #model.add(LSTM(units=hidden_size, input_shape=(time_steps,feature_num), return_sequences=True))
-    model.add(Bidirectional(LSTM(units=hidden_size, input_shape=(time_steps,feature_num), return_sequences=True), merge_mode = 'concat'))
+    #model.add(LSTM(units=hidden_size*2, input_shape=(time_steps,feature_num), return_sequences=True, dropout=dropout, recurrent_dropout=recurrent_dropout))
+    model.add(Bidirectional(LSTM(units=hidden_size, input_shape=(time_steps,feature_num), return_sequences=True, dropout=dropout, recurrent_dropout=recurrent_dropout), merge_mode = 'concat'))
+    #model.add(LSTM(units=hidden_size, return_sequences=True, dropout=dropout, recurrent_dropout=recurrent_dropout))
+    model.add(Bidirectional(LSTM(units=hidden_size, return_sequences=True, dropout=dropout, recurrent_dropout=recurrent_dropout), merge_mode = 'concat'))
+    model.add(Bidirectional(LSTM(units=hidden_size, return_sequences=True, dropout=dropout, recurrent_dropout=recurrent_dropout), merge_mode = 'concat'))
     #model.add(LSTM(units=hidden_size, return_sequences=True))
-    model.add(Bidirectional(LSTM(units=hidden_size, return_sequences=True), merge_mode = 'concat'))
-    model.add(Dropout(dropout))
-    #model.add(Bidirectional(LSTM(units=int(hidden_size/2), return_sequences=True), merge_mode = 'sum'))
-    model.add(TimeDistributed(Dense(int(hidden_size/2), activation=mish)))
+    model.add(TimeDistributed(Dense(int(hidden_size), activation=mish)))
     model.add(Flatten())
+    model.add(Dense(1024))
+    model.add(Dropout(rate=dropout))
+    model.add(Dense(1024))
+    model.add(Dropout(rate=dropout))
     model.add(Dense(y_dim)) # Dense layer has y_dim=1 or 2 neuron.
     model.add(Activation('softmax'))
     model.compile(loss=wrapped_loss(alpha_cb), optimizer=optimizer, metrics=[f1_score])
     return model
 
+classifier().summary()
 
 # Split X, y into training and validation sets
 # define k-fold cross validation test harness
-seed = 10
-n_splits = 5
+seed = 100
+n_splits = 10
 kfold = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=seed)
 cvscores = []
 
@@ -440,6 +571,7 @@ for train, val in kfold.split(np.asarray(labels), np.asarray(labels)):
     X_val = X[val]
     y_train = y[train]
     y_val = y[val]
+    #"""
     #pre-processing per sample
     #X_train = preprocessor_per_sample.fit_transform(X_train)
     #X_val = preprocessor_per_sample.fit_transform(X_val)
@@ -455,5 +587,6 @@ for train, val in kfold.split(np.asarray(labels), np.asarray(labels)):
     history = clf.fit(X_train, y_train)
     final_val_score = history.history['val_f1_score'][-1]
     print('val_f1_score = %.2f' %final_val_score)
+    #lr_callback.plot_schedule(clip_beginning=10, clip_endding=5)
     cvscores.append(final_val_score)
 
